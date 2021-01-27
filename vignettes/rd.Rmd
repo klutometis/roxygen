@@ -165,8 +165,8 @@ Indent the second and subsequent lines of a tag so that when scanning the docume
   `print()`. (You should, however, always `@export` S3 methods).
   
   If your method is more complicated, you should document it by setting 
-  `@rdname`. Typically you will document methods with their generic, so you'd
-  document `foofy.data.frame` by setting `@rdname`. In base R, you can find 
+  `@describeIn`. Typically you will document methods with their generic, so you'd
+  document `foofy.data.frame` by setting `@describeIn`. In base R, you can find 
   documentation for more complex methods like `?predict.lm`, `?predict.glm`, 
   and `?anova.glm`.
 
@@ -455,26 +455,50 @@ You can document multiple functions in the same file by using either `@rdname` o
 
 #### `@describeIn`
 
-`@describeIn` is designed for the most common cases:
+Use `@describeIn` to surface the relationships between one or more "source" functions, and the destination file you want them documented in.
+If you add `@describeIn <destination> <description>` to some source function, it will be documented inside the `<destination>` file (usually the function name).
+It generates a new section named "**Related Functions and Methods**", further divided into subsections by the type of relationship between the source and the destination documentation.
+Each subsections contains a bulleted list including your `<description>`.
 
-* documenting methods in a generic
-* documenting methods in a class
-* documenting functions with the same (or similar arguments)
+##### Functions
 
-It generates a new section, named either "Methods (by class)", "Methods (by generic)" or "Functions". The section contains a bulleted list describing each function, labelled so that you know what function or method it's talking about. Here's an example, documenting an imaginary new generic:
+You can document several functions which perform slight variations of a task or which use different defaults in one documentation file:
 
-```{r}
-#' Foo bar generic
-#'
-#' @param x Object to foo.
-foobar <- function(x) UseMethod("x")
-
-#' @describeIn foobar Difference between the mean and the median
-foobar.numeric <- function(x) abs(mean(x) - median(x))
-
-#' @describeIn foobar First and last values pasted together in a string.
-foobar.character <- function(x) paste0(x[1], "-", x[length(x)])
+```{r, code = brio::read_lines("../tests/testthat/roxygen-block-describe-in-functions.R")}
 ```
+
+In this case, both destination and source are "normal" functions, and you can use `<description>` to explain their differences.
+
+##### Methods
+
+`@describeIn` is also well suited to explain the relationships between functions making up an object oriented (OO) scheme using S3 or S4.
+In this case, roxygen will automatically detect whether a source function is a method and document the relationship to the relevant class or generic.
+
+Your new methods will be organised in one of two ways:
+
+1. If your new method extends a generic in the `<destination>`, it will be listed in a subsection titled "**Methods extending `<destination>` generic (by class)**".
+    The subsection will include all methods for your new generic, labelled by the class they cover.
+
+    ```{r, code = brio::read_lines("../tests/testthat/roxygen-block-describe-in-method-in-gen.R")}
+    ```
+    
+    The methods `zap.numeric()` and `zap.character()` will be labelled by their 
+    classes, because they extend the generic `zap()` in the parent documentation.
+    The method `print.qux()` will be labelled as a normal function, because it extends an unrelated generic `print()`.
+    The `zap_helper()` function will, likewise, be displayed as a normal function.
+
+1. If your new method extends another generic, for a class constructed in the destination, it will be listed in a subsection titled "**Methods extending `<destination>` class (by generic)**"
+    It will be labelled by the generic which the method extends.
+    
+    ```{r, code = brio::read_lines("../tests/testthat/roxygen-block-describe-in-method-in-const.R")}
+    ```
+    
+    The resulting output describes `print.foo()` (a method) and `is_foo()` (a normal function) under different headings, pointing users to the different semantics for both. 
+    `format.bar()` will also be presented as a normal method, because it does not cover the class in question.
+
+While you can mix and match (some) different types of functions with `@describeIn`, the output may quickly become disorienting for users if the functions are not tightly related.
+
+
 
 #### `@rdname`
 

@@ -1,5 +1,11 @@
 # roxygen2 (development version)
 
+* `@describeIn` can be used to combine multiple types of functions
+  (generics, methods and other functions) into a `*.Rd` documentation file.
+  The resulting minidescription section organises the functions by type (#1181).
+  Methods are recognized only if they extend the generic in the destination,
+  or if the destination can heuristically be identified as a constructor.
+
 * The new `@exmaplesIf` tag can be used to create conditional
   examples. These examples only run if a specified condition
   holds (#962).

@@ -23,52 +23,124 @@ topic_add_describe_in <- function(topic, block, env) {
   }
 
   dest <- find_object(tag$val$name, env)
-  label <- build_label(block$object, dest, block)
-  if (is.null(label))
-    return()
+  metadata <- build_minidesc_metadata(src = block$object, dest = dest)
 
-  topic$add(rd_section_minidesc(
-    label$type,
-    label$label,
-    tag$val$description
-  ))
+  topic$add(rlang::exec(rd_section_minidesc, !!!c(
+    name = block$object$topic,
+    desc = tag$val$description,
+    metadata
+  )))
   dest$topic
 }
 
 # Field -------------------------------------------------------------------
 
-rd_section_minidesc <- function(type, label, desc) {
-  stopifnot(is.character(type), is.character(label), is.character(desc))
-  stopifnot(length(desc) == length(label))
-
-  rd_section("minidesc", list(type = type, desc = desc, label = label))
+#' Record data for minidescription sections from `@describeIn`
+#' 
+#' @param name name of the source function.
+#' @param desc description passed to `@describeIn`.
+#' @param extends how the source function extends the destination function:
+#' - `"generic"` if the source extends a (S3 or S4) generic in the destination,
+#' - `"class"` if the source extends an informal S3 or formal S4 constructor
+#'    in the destination.
+#'    For S3, there is always only *one* class.
+#'    For S4, the methods' signature is used instead, to cover multiple dispatch.
+#' - `""` (default) otherwise.
+#' @param generic,class name of the generic and class that is being extended by 
+#' the method, otherwise empty string (`""`).
+#' @return a dataframe with one row for each `@describeIn`, wrapped inside 
+#' `rd_section()`
+#' @noRd
+rd_section_minidesc <- function(name,
+                                desc,
+                                extends = c("", "generic", "class"),
+                                generic = "",
+                                class = "") {
+  stopifnot(is_scalar_character(name))
+  stopifnot(is_character(desc))
+  rlang::arg_match(extends)
+  stopifnot(is_scalar_character(generic))
+  stopifnot(is_scalar_character(class))
+  data <- data.frame(
+    name = name,
+    desc = desc,
+    extends = extends,
+    generic = generic,
+    class = class,
+    stringsAsFactors = FALSE
+  )
+  rd_section(
+    "minidesc",
+    data
+  )
 }
 
 #' @export
 merge.rd_section_minidesc <- function(x, y, ...) {
   stopifnot(identical(class(x), class(y)))
-  stopifnot(identical(x$value$type, y$value$type))
-  rd_section_minidesc(
-    x$value$type,
-    label = c(x$value$label, y$value$label),
-    desc = c(x$value$desc, y$value$desc)
+  rd_section(
+    "minidesc",
+    rbind(x$value, y$value, stringsAsFactors = FALSE)
   )
 }
 
+# Rd Output -------------------------------------------------------------------
+
 #' @export
 format.rd_section_minidesc <- function(x, ...) {
-  title <- switch(x$value$type,
-    generic = "Methods (by class)",
-    class = "Methods (by generic)",
-    "function" = "Functions"
+  section_title <- "Related Functions and Methods"
+  
+  df <- x$value
+  subsection_by <- unique(df[, "extends"])
+  section_body <- purrr::map_chr(subsection_by, format_subsections, df)
+  
+  paste0(
+    "\\section{", section_title, "}{\n",
+    paste0(section_body, collapse = "\n"),
+    "}\n"
+  )
+}
+
+format_subsections <- function(extends, df) {
+  class <- unique(df[df$extends == extends, "class"])
+  generic <- unique(df[df$extends == extends, "generic"])
+  subsection_title <- switch(
+    extends,
+    class = paste0(
+      "Methods extending \\code{", escape(class), "} class (by generic):"
+    ),
+    generic = paste0(
+      "Methods extending \\code{", escape(generic), "} generic (by class):"
+    ),
+    "Functions"
   )
 
+  list_by <- unique(df[df$extends == extends, , drop = FALSE])
+  subsection_body <- purrr::pmap_chr(list_by, format_subsection)
+  subsection_body <- paste0(subsection_body, collapse = "\n")
+
   paste0(
-    "\\section{", title, "}{\n",
-    "\\itemize{\n",
-    paste0("\\item \\code{", escape(x$value$label), "}: ", x$value$desc,
-      collapse = "\n\n"),
-    "\n}}\n"
+    "\\subsection{", subsection_title, "}{\n", subsection_body, "}",
+    collapse = "\n"
+  )
+}
+
+format_subsection <- function(name, desc, extends, generic, class) {
+  label <- switch(
+    extends,
+    "class" = generic,
+    "generic" = class,
+    name
+  )
+  paste0(
+  "\\itemize{\n",
+    paste0(
+      "\\item \\code{",
+      escape(label),
+      "}: ", desc,
+      collapse = "\n"
+    ),
+    "\n}"
   )
 }
 
@@ -87,36 +159,80 @@ find_object <- function(name, env) {
   }
 }
 
-build_label <- function(src, dest, block) {
+#' Build metadata for how to present `@describeIn` tag
+#' @return list of character scalars named `extends`, `generic`, `class`.
+#' See rd_section_minidesc() for details.
+#' @noRd
+build_minidesc_metadata <- function(src, dest) {
   src_type <- class(src)[1]
   dest_type <- class(dest)[1]
+  dest_name <- as.character(dest$topic)
 
-  if (dest_type == "s4class" && src_type == "s4method") {
-    # Label S4 methods in class with their generic
-    type <- "class"
-    label <- as.character(src$value@generic)
-  } else if (dest_type == "s4generic" && src_type == "s4method") {
-    # Label S4 methods in generic with their signature
-    type <- "generic"
-    sig <- src$value@defined
-    if (length(sig) == 1) {
-      label <- as.character(sig)
-    } else {
-      label <- paste0(names(sig), " = ", sig, collapse = ",")
+  # fallback defaults
+  extends <- class <- generic <- ""
+  
+  if (src_type == "s3method") {
+    generic <- attr(src$value, "s3method")[1]
+    class <- attr(src$value, "s3method")[2]
+    if (dest_type == "s3generic" && generic == dest_name) {
+      # src method fits dest generic
+      extends <- "generic"
+    } else if (fits_constructor(dest_name, src)) {
+      # src method fits informal dest constructor (heuristically)
+      extends <- "class"
     }
-  } else if (dest_type == "function" && src_type == "s3method") {
-    # Assuming you document S3 methods in the class constructor
-    type <- "class"
-    label <- attr(src$value, "s3method")[1]
-  } else if (dest_type == "s3generic" && src_type == "s3method") {
-    # Label S3 methods in generic with their class
-    type <- "generic"
-    label <- attr(src$value, "s3method")[2]
-  } else {
-    # Otherwise just fallback to function + topic
-    type <- "function"
-    label <- src$topic
+  } else if (src_type == "s4method") {
+    generic <- as.character(src$value@generic)
+    class <- sig2class(src$value@defined)
+    if (dest_type == "s4generic") {
+      # TODO must test whether src method fits dest generic
+      extends <- "generic"
+    } else if (dest_type == "s4class") {
+      extends <- "class"
+      # TODO must test whether src method fits dest constructor
+    }
   }
+  list(extends = extends, generic = generic, class = class)
+}
 
-  list(type = type, label = label)
+#' Turn S4 signatures into a character scalar
+#' @noRd
+sig2class <- function(sig) {
+  if (length(sig) == 1) {
+    class <- sig
+  } else {
+    class <- paste0(names(sig), " = ", sig, collapse = ",")
+  }
+  as.character(class)
+}
+
+#' Tests if destination is a constructor for class of src
+#' 
+#' No formal test is possible, these are heuristics.
+#' @noRd
+fits_constructor <- function(dest_name, src) {
+  src_class <- attr(src$value, "s3method")[2]
+  # assuming that dest is class constructor, when class == dest name
+  if (src_class == dest_name) TRUE
+  else fits_constructor_disambig_class(src_class, dest_name)
+}
+
+#' Test if class of src is a disambiguated version of dest
+#' 
+#' Tests if `dest_name` and pkg are in `src_class`.
+#' 
+#' [Advanced R](https://adv-r.hadley.nz/s3.html#s3-classes) recommends to add 
+#' the pkg name to the class name, to avoid namespace clashes.
+#' In this case, the actual class may be called "pkg_baz", but the exported 
+#' "S3 constructor" may still called "pkg::baz()", because "pkg::pkg_baz()"
+#' would be redundant.
+#' This function checks for these kinds of heuristic matches between src_class
+#' and dest_name.
+#' @noRd
+fits_constructor_disambig_class <- function(src_class, dest_name, pkg_name) {
+  evalenv <- roxy_meta_get("env")
+  # This should only happen in our test cases
+  if (is.null(evalenv)) evalenv <- parent.frame()
+  stringr::str_detect(src_class, dest_name) &&
+  stringr::str_detect(src_class, utils::packageName(env = evalenv))
 }

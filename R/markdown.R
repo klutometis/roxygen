@@ -1,4 +1,3 @@
-
 markdown <- function(text, tag = NULL, sections = FALSE) {
   tag <- tag %||% list(file = NA, line = NA)
   tryCatch(
@@ -15,44 +14,15 @@ markdown <- function(text, tag = NULL, sections = FALSE) {
   markdown_pass2(escaped_text, tag = tag, sections = sections)
 }
 
-#' Expand the embedded inline code
+#' Expand R code
 #'
 #' @details
-#' For example this becomes two: `r 1+1`.
-#' Variables can be set and then reused, within the same
-#' tag: `r x <- 100; NULL`
-#' The value of `x` is `r x`.
-#'
-#' We have access to the internal functions of the package, e.g.
-#' since this is _roxygen2_, we can refer to the internal `markdown`
-#' function, and this is `TRUE`: `r is.function(markdown)`.
-#'
-#' To insert the name of the current package: `r packageName()`.
-#'
-#' The `iris` data set has `r ncol(iris)` columns:
-#' `r paste0("``", colnames(iris), "``", collapse = ", ")`.
-#'
-#' ```{r}
-#' # Code block demo
-#' x + 1
-#' ```
-#'
-#' Chunk options:
-#'
-#' ```{r results = "hold"}
-#' names(mtcars)
-#' nrow(mtcars)
-#' ```
-#'
-#' Plots:
-#'
-#' ```{r test-figure}
-#' plot(1:10)
-#' ```
-#'
+#' See `vignette("rd-formatting")`.
+#' 
 #' @param text Input text.
-#' @return Text with the inline code expanded. A character vector of the
-#' same length as the input `text`.
+#' @return 
+#' Text with R code expanded. 
+#' A character vector of the same length as the input `text`.
 #'
 #' @importFrom xml2 xml_ns_strip xml_find_all xml_attr
 #' @importFrom purrr keep
@@ -98,19 +68,23 @@ eval_code_nodes <- function(nodes) {
 
 eval_code_node <- function(node, env) {
   if (xml_name(node) == "code") {
-    text <- str_replace(xml_text(node), "^r ", "")
-    paste(eval(parse(text = text), envir = env), collapse = "\n")
-
+    # write knitr markup for inline code
+    text <- paste0("`", xml_text(node), "`")
   } else {
+    # write knitr markup for fenced code
     text <- paste0("```", xml_attr(node, "info"), "\n", xml_text(node), "```\n")
-    opts_chunk$set(
-      error = FALSE,
-      fig.path = "man/figures/",
-      fig.process = function(path) basename(path)
-    )
-    knit(text = text, quiet = TRUE, envir = env)
   }
+  old_opts <- knitr::opts_chunk$get()
+  purrr::exec(opts_chunk$set, knitr_chunk_defaults)
+  on.exit(purrr::exec(opts_chunk$set, old_opts), add = TRUE, after = FALSE)
+  knit(text = text, quiet = TRUE, envir = env)
 }
+
+knitr_chunk_defaults <- list(
+  error = FALSE,
+  fig.path = "man/figures/",
+  fig.process = function(path) basename(path)
+)
 
 str_set_all_pos <- function(text, pos, value, nodes) {
   # Cmark has a bug when reporting source positions for multi-line
